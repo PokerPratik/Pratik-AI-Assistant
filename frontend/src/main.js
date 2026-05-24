@@ -10,6 +10,35 @@ document.addEventListener('DOMContentLoaded', () => {
   const historyList = document.querySelector('.history-list');
   const currentChatTitle = document.getElementById('current-chat-title');
 
+  // ── Mobile sidebar wiring ────────────────────────────────
+  const sidebar = document.getElementById('sidebar');
+  const hamburgerBtn = document.getElementById('hamburger-btn');
+  const sidebarOverlay = document.getElementById('sidebar-overlay');
+
+  const openSidebar = () => {
+    sidebar.classList.add('open');
+    sidebarOverlay.classList.add('visible');
+    hamburgerBtn.setAttribute('aria-expanded', 'true');
+  };
+
+  const closeSidebar = () => {
+    sidebar.classList.remove('open');
+    sidebarOverlay.classList.remove('visible');
+    hamburgerBtn.setAttribute('aria-expanded', 'false');
+  };
+
+  hamburgerBtn.addEventListener('click', () => {
+    sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+  });
+
+  sidebarOverlay.addEventListener('click', closeSidebar);
+
+  // Close sidebar on Escape key (accessibility)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSidebar();
+  });
+  // ────────────────────────────────────────────────────────
+
   const settingsBtn = document.getElementById('settings-btn');
   const settingsModal = document.getElementById('settings-modal');
   const closeSettingsBtn = document.getElementById('close-settings-btn');
@@ -52,66 +81,214 @@ document.addEventListener('DOMContentLoaded', () => {
   let chats = JSON.parse(localStorage.getItem('pratik_chats')) || [];
   let currentChatId = null;
 
-  const renderHistory = () => {
-    historyList.innerHTML = '';
-    chats.forEach(chat => {
-      const wrapper = document.createElement('div');
-      wrapper.className = `history-item-wrapper ${chat.id === currentChatId ? 'active' : ''}`;
+  // ── Custom Confirm Dialog ──────────────────────────────────────
+  const confirmDialog = document.createElement('div');
+  confirmDialog.className = 'confirm-dialog';
+  confirmDialog.innerHTML = `
+    <p class="confirm-msg"></p>
+    <div class="confirm-dialog-actions">
+      <button class="confirm-cancel-btn">Cancel</button>
+      <button class="confirm-ok-btn">Delete</button>
+    </div>
+  `;
+  document.body.appendChild(confirmDialog);
 
-      const titleBtn = document.createElement('button');
-      titleBtn.className = 'history-item-title';
-      titleBtn.textContent = chat.title || 'New Conversation';
-      titleBtn.onclick = () => loadChat(chat.id);
+  let _confirmResolve = null;
 
-      const dotsBtn = document.createElement('button');
-      dotsBtn.className = 'history-dots-btn';
-      dotsBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>';
+  confirmDialog.querySelector('.confirm-cancel-btn').addEventListener('click', () => {
+    confirmDialog.classList.remove('visible');
+    if (_confirmResolve) _confirmResolve(false);
+  });
+  confirmDialog.querySelector('.confirm-ok-btn').addEventListener('click', () => {
+    confirmDialog.classList.remove('visible');
+    if (_confirmResolve) _confirmResolve(true);
+  });
 
-      const dropdown = document.createElement('div');
-      dropdown.className = 'history-dropdown hidden';
-      dropdown.innerHTML = `
-        <button class="dropdown-item" data-action="rename"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg> Rename</button>
-        <button class="dropdown-item" data-action="pin"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="17" x2="12" y2="22"></line><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.6V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v4.6a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path></svg> Pin chat</button>
-        <button class="dropdown-item" data-action="archive"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"></polyline><rect x="1" y="3" width="22" height="5"></rect><line x1="10" y1="12" x2="14" y2="12"></line></svg> Archive</button>
-        <div class="dropdown-divider"></div>
-        <button class="dropdown-item danger" data-action="delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg> Delete</button>
-      `;
+  const showConfirm = (message, okLabel = 'Delete') => {
+    confirmDialog.querySelector('.confirm-msg').textContent = message;
+    confirmDialog.querySelector('.confirm-ok-btn').textContent = okLabel;
+    confirmDialog.classList.add('visible');
+    return new Promise(resolve => { _confirmResolve = resolve; });
+  };
 
-      dotsBtn.addEventListener('click', (e) => {
+  // ── Section Label ─────────────────────────────────────────────
+  const createSectionLabel = (text) => {
+    const el = document.createElement('div');
+    el.className = 'history-section-label';
+    el.textContent = text;
+    return el;
+  };
+
+  // ── Single History Item ───────────────────────────────────────
+  const createHistoryItem = (chat) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = `history-item-wrapper ${chat.id === currentChatId ? 'active' : ''}`;
+
+    // Pin badge (small icon shown when pinned)
+    const pinBadge = document.createElement('span');
+    pinBadge.className = 'pin-badge';
+    pinBadge.title = 'Pinned';
+    pinBadge.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>`;
+    pinBadge.style.display = chat.pinned ? 'flex' : 'none';
+
+    const titleBtn = document.createElement('button');
+    titleBtn.className = 'history-item-title';
+    titleBtn.textContent = chat.title || 'New Conversation';
+    titleBtn.onclick = () => {
+      loadChat(chat.id);
+      if (window.innerWidth <= 768) closeSidebar();
+    };
+
+    const dotsBtn = document.createElement('button');
+    dotsBtn.className = 'history-dots-btn';
+    dotsBtn.setAttribute('aria-label', 'Chat options');
+    dotsBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>`;
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'history-dropdown hidden';
+    dropdown.innerHTML = `
+      <button class="dropdown-item" data-action="rename">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+        Rename
+      </button>
+      <button class="dropdown-item" data-action="pin">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="17" x2="12" y2="22"></line><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.6V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v4.6a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path></svg>
+        ${chat.pinned ? 'Unpin' : 'Pin chat'}
+      </button>
+      <button class="dropdown-item" data-action="archive">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"></polyline><rect x="1" y="3" width="22" height="5"></rect><line x1="10" y1="12" x2="14" y2="12"></line></svg>
+        ${chat.archived ? 'Unarchive' : 'Archive'}
+      </button>
+      <div class="dropdown-divider"></div>
+      <button class="dropdown-item danger" data-action="delete">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        Delete
+      </button>
+    `;
+
+    dotsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.history-dropdown').forEach(d => d.classList.add('hidden'));
+      dropdown.classList.toggle('hidden');
+    });
+
+    dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+      item.addEventListener('click', async (e) => {
         e.stopPropagation();
-        // Close all other open dropdowns first
-        document.querySelectorAll('.history-dropdown').forEach(d => d.classList.add('hidden'));
-        dropdown.classList.toggle('hidden');
-      });
+        dropdown.classList.add('hidden');
+        const action = item.dataset.action;
 
-      dropdown.querySelectorAll('.dropdown-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const action = item.dataset.action;
-          
-          if (action === 'rename') {
-            const newTitle = prompt('Enter new name:', chat.title);
-            if (newTitle && newTitle.trim()) {
-              chat.title = newTitle.trim();
-              saveChats();
+        if (action === 'rename') {
+          // ── Inline rename ──────────────────────────────────
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'rename-input';
+          input.value = chat.title || 'New Conversation';
+          wrapper.replaceChild(input, titleBtn);
+          input.focus();
+          input.select();
+
+          const finishRename = () => {
+            const newTitle = input.value.trim();
+            if (newTitle) {
+              chat.title = newTitle;
               if (chat.id === currentChatId) currentChatTitle.textContent = chat.title;
+              saveChats(); // will re-render, replacing input with fresh item
+            } else {
+              // Revert without saving
+              if (input.parentNode === wrapper) wrapper.replaceChild(titleBtn, input);
             }
-          } else if (action === 'delete') {
+          };
+
+          input.addEventListener('blur', finishRename, { once: true });
+          input.addEventListener('keydown', (ke) => {
+            if (ke.key === 'Enter')  { ke.preventDefault(); input.blur(); }
+            if (ke.key === 'Escape') { input.value = chat.title; input.blur(); }
+          });
+
+        } else if (action === 'pin') {
+          // ── Pin / Unpin ────────────────────────────────────
+          chat.pinned = !chat.pinned;
+          if (chat.pinned) chat.archived = false; // can't be both
+          saveChats();
+
+        } else if (action === 'archive') {
+          // ── Archive / Unarchive ────────────────────────────
+          chat.archived = !chat.archived;
+          if (chat.archived) chat.pinned = false; // can't be both
+          saveChats();
+          // If active chat is being archived, switch to another
+          if (chat.archived && chat.id === currentChatId) {
+            const next = chats.find(c => !c.archived && c.id !== chat.id);
+            next ? loadChat(next.id) : createNewChat();
+          }
+
+        } else if (action === 'delete') {
+          // ── Delete with custom confirm ─────────────────────
+          const confirmed = await showConfirm(
+            `Delete "${chat.title || 'New Conversation'}"? This cannot be undone.`
+          );
+          if (confirmed) {
             chats = chats.filter(c => c.id !== chat.id);
             saveChats();
             if (chat.id === currentChatId) {
-              chats.length > 0 ? loadChat(chats[0].id) : createNewChat();
+              const next = chats.find(c => !c.archived);
+              next ? loadChat(next.id) : createNewChat();
             }
           }
-          dropdown.classList.add('hidden');
-        });
+        }
+      });
+    });
+
+    wrapper.appendChild(pinBadge);
+    wrapper.appendChild(titleBtn);
+    wrapper.appendChild(dotsBtn);
+    wrapper.appendChild(dropdown);
+    return wrapper;
+  };
+
+  // ── Render Full History List ──────────────────────────────────
+  const renderHistory = () => {
+    historyList.innerHTML = '';
+
+    const pinned   = chats.filter(c => c.pinned && !c.archived);
+    const normal   = chats.filter(c => !c.pinned && !c.archived);
+    const archived = chats.filter(c => c.archived);
+
+    // Pinned section
+    if (pinned.length > 0) {
+      historyList.appendChild(createSectionLabel('📌 Pinned'));
+      pinned.forEach(chat => historyList.appendChild(createHistoryItem(chat)));
+    }
+
+    // Normal section (only add label when there are also pinned)
+    if (normal.length > 0) {
+      if (pinned.length > 0) historyList.appendChild(createSectionLabel('💬 Chats'));
+      normal.forEach(chat => historyList.appendChild(createHistoryItem(chat)));
+    }
+
+    // Archived collapsible section
+    if (archived.length > 0) {
+      const archiveToggle = document.createElement('button');
+      archiveToggle.className = 'archive-toggle-btn';
+      archiveToggle.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"></polyline><rect x="1" y="3" width="22" height="5"></rect></svg>
+        Archived (${archived.length})
+        <svg class="archive-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:auto;transition:transform 0.25s;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      `;
+
+      const archiveSection = document.createElement('div');
+      archiveSection.className = 'archive-section hidden';
+      archived.forEach(chat => archiveSection.appendChild(createHistoryItem(chat)));
+
+      archiveToggle.addEventListener('click', () => {
+        const isHidden = archiveSection.classList.toggle('hidden');
+        archiveToggle.querySelector('.archive-chevron').style.transform = isHidden ? '' : 'rotate(180deg)';
       });
 
-      wrapper.appendChild(titleBtn);
-      wrapper.appendChild(dotsBtn);
-      wrapper.appendChild(dropdown);
-      historyList.appendChild(wrapper);
-    });
+      historyList.appendChild(archiveToggle);
+      historyList.appendChild(archiveSection);
+    }
   };
 
   const saveChats = () => {
@@ -223,6 +400,42 @@ document.addEventListener('DOMContentLoaded', () => {
     chatFeed.scrollTop = chatFeed.scrollHeight;
   };
 
+  // ── YouTube Facade: show thumbnail, load iframe only on click ──
+  // Defined here (module scope) so addMessageToFeed & processMessage can both use it
+  const createYouTubeFacade = (embedUrl, label) => {
+    const videoId = embedUrl.split('/embed/')[1]?.split('?')[0] || '';
+    const thumbUrl = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'yt-facade';
+    wrapper.innerHTML = `
+      <img class="yt-thumb" src="${thumbUrl}" alt="${label}" loading="lazy">
+      <div class="yt-play-overlay">
+        <div class="yt-play-btn">
+          <svg viewBox="0 0 24 24" fill="white" width="30" height="30"><polygon points="5,3 19,12 5,21"/></svg>
+        </div>
+      </div>
+      <div class="yt-label">${label}</div>
+    `;
+
+    wrapper.addEventListener('click', () => {
+      const iframe = document.createElement('iframe');
+      iframe.width = '100%';
+      iframe.height = '220';
+      iframe.src = embedUrl + '?autoplay=1&rel=0';
+      iframe.title = label;
+      iframe.frameBorder = '0';
+      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+      iframe.allowFullscreen = true;
+      iframe.style.borderRadius = '12px';
+      iframe.style.display = 'block';
+      iframe.style.width = '100%';
+      wrapper.replaceWith(iframe);
+    }, { once: true });
+
+    return wrapper;
+  };
+
   const addMessageToFeed = (text, sender, save = true) => {
     const isUser = sender === 'user';
     const messageEl = document.createElement('div');
@@ -233,6 +446,13 @@ document.addEventListener('DOMContentLoaded', () => {
         ${text}
       </div>
     `;
+
+    // Reconstruct any YouTube facade placeholders (works for live AND history loads)
+    messageEl.querySelectorAll('.yt-facade-placeholder').forEach(placeholder => {
+      const embedUrl = placeholder.dataset.embed;
+      const label    = placeholder.dataset.label || '';
+      if (embedUrl) placeholder.replaceWith(createYouTubeFacade(embedUrl, label));
+    });
     
     chatFeed.appendChild(messageEl);
     scrollToBottom();
@@ -279,6 +499,7 @@ document.addEventListener('DOMContentLoaded', () => {
     messageInput.value = '';
 
     const lowerText = text.toLowerCase();
+
     
     // Image Generation Intent
     const imgMatch = lowerText.match(/(?:generate|create|show|make|draw).*(?:image|photo|picture|drawing) of\s+(.+)/);
@@ -310,8 +531,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await fetchMusicEmbed(query);
             removeTypingIndicator();
             if (data.success && data.embedUrl) {
-                const iframe = `<iframe width="100%" height="200" src="${data.embedUrl}?autoplay=1" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="border-radius: 12px; margin-top: 10px;"></iframe>`;
-                addMessageToFeed(`Here is ${query}:<br>${iframe}`, 'system');
+                // Save a placeholder string — addMessageToFeed will turn it into a facade
+                // This also means it's saved to history correctly and restores on reload
+                const msgHtml = `Here is <strong>${query}</strong>:<br><span class="yt-facade-placeholder" data-embed="${data.embedUrl}" data-label="${query}"></span>`;
+                addMessageToFeed(msgHtml, 'system');
             } else {
                 addMessageToFeed(`Sorry, I couldn't find a song for ${query}.`, 'system');
             }
@@ -400,8 +623,8 @@ document.addEventListener('DOMContentLoaded', () => {
          try {
              const data = await fetchMusicEmbed(query);
              if (data.success && data.embedUrl) {
-                 const iframe = `<br><iframe width="100%" height="200" src="${data.embedUrl}?autoplay=1" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="border-radius: 12px; margin-top: 10px;"></iframe>`;
-                 replyHtml = replyHtml.replace(/\[MUSIC:\s*[\s\S]+?\]/i, iframe);
+                 // Use a placeholder so we can attach DOM node after addMessageToFeed
+                 replyHtml = replyHtml.replace(/\[MUSIC:\s*[\s\S]+?\]/i, `<span class="yt-facade-placeholder" data-embed="${data.embedUrl}" data-label="${query}"></span>`);
              } else {
                  replyHtml = replyHtml.replace(/\[MUSIC:\s*[\s\S]+?\]/i, '<br>*(Could not find the requested song)*');
              }
@@ -410,9 +633,9 @@ document.addEventListener('DOMContentLoaded', () => {
          }
       }
       
-      // 4. Add system message
+      // 4. Add system message (addMessageToFeed auto-converts yt-facade-placeholder spans)
       addMessageToFeed(replyHtml, 'system');
-      
+
       // Clean text for speech
       const textToSpeak = replyHtml.replace(/<[^>]*>?/gm, '').replace(/\[.*?\]/g, '');
       if (textToSpeak.trim()) speakText(textToSpeak);
@@ -431,7 +654,10 @@ document.addEventListener('DOMContentLoaded', () => {
     processMessage(text);
   });
 
-  newChatBtn.addEventListener('click', createNewChat);
+  newChatBtn.addEventListener('click', () => {
+    createNewChat();
+    if (window.innerWidth <= 768) closeSidebar();
+  });
   
   if (settingsBtn) {
     settingsBtn.addEventListener('click', () => settingsModal.classList.remove('hidden'));

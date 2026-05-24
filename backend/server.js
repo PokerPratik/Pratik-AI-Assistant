@@ -41,6 +41,14 @@ User says: ${message}`;
 
     } catch (error) {
         console.error('Error in chat API:', error);
+        
+        // Handle Gemini API 503 Service Unavailable
+        if (error.status === 503 || error.message?.includes('503')) {
+            return res.json({ 
+                reply: "I am having trouble connecting to my AI brain right now (Gemini API is temporarily overloaded). Please try again in a few seconds!"
+            });
+        }
+        
         res.status(500).json({ error: 'Failed to process request' });
     }
 });
