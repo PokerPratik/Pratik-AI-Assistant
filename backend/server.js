@@ -18,7 +18,7 @@ app.get('/api/health', (req, res) => {
 
 app.post('/api/chat', async (req, res) => {
     try {
-        const { message } = req.body;
+        const { message, imageBase64 } = req.body;
 
         if (!process.env.GEMINI_API_KEY) {
             return res.json({
@@ -33,7 +33,18 @@ app.post('/api/chat', async (req, res) => {
 If the user asks you to generate, create, or show an image/photo/picture, DO NOT say you cannot. Instead, reply EXACTLY with the tag: [IMAGE: <highly detailed description of the image>]
 If the user asks you to play a song or music, DO NOT say you cannot. Instead, reply EXACTLY with the tag: [MUSIC: <song name and artist>]
 User says: ${message}`;
-        const result = await model.generateContent(prompt);
+        
+        const generateParams = [prompt];
+        if (imageBase64) {
+            generateParams.push({
+                inlineData: {
+                    data: imageBase64.split(',')[1] || imageBase64, // Extract pure base64
+                    mimeType: "image/jpeg"
+                }
+            });
+        }
+
+        const result = await model.generateContent(generateParams);
         const response = await result.response;
         const text = response.text();
 

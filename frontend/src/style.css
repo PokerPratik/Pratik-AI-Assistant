@@ -677,6 +677,7 @@ body {
 }
 
 .chat-form {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -998,4 +999,113 @@ input:checked + .slider::before { transform: translateX(20px); background-color:
 @media (max-width: 380px) {
   .message-bubble { max-width: 94%; }
   .chat-feed { padding-left: 10px; padding-right: 10px; }
+}
+
+/* ─── Attachments ────────────────────────────────────────────── */
+.attachment-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attachment-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.3s, background-color 0.3s;
+  flex-shrink: 0;
+}
+
+.attachment-btn:hover,
+.attachment-btn.active {
+  color: var(--accent-primary);
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+.attachment-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  min-width: 160px;
+  padding: 6px 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+}
+
+.attachment-menu.hidden {
+  display: none !important;
+}
+
+.attachment-menu button {
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  padding: 10px 16px;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: background 0.2s, color 0.2s;
+  font-family: var(--font-sans);
+}
+
+.attachment-menu button:hover {
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+
+.image-preview-container {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 20px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 8px;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  z-index: 10;
+}
+
+.image-preview-container.hidden {
+  display: none !important;
+}
+
+#image-preview {
+  max-width: 80px;
+  max-height: 80px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+#clear-preview-btn {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: bold;
 }

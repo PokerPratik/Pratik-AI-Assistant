@@ -1,13 +1,17 @@
-const API_URL = 'http://localhost:3000/api';
+// const API_URL = 'http://localhost:3000/api';
+const API_URL = 'https://pratik-ai-assistant.onrender.com/api';
 
-export const sendChatMessage = async (message) => {
+
+export const sendChatMessage = async (message, imageBase64 = null) => {
     try {
+        const payload = { message };
+        if (imageBase64) payload.imageBase64 = imageBase64;
         const response = await fetch(`${API_URL}/chat`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ message }),
+            body: JSON.stringify(payload),
         });
 
         if (!response.ok) {

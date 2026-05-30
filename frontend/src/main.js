@@ -1,10 +1,112 @@
 import './style.css';
 import { sendChatMessage, executeSystemCommand, fetchMusicEmbed } from './api.js';
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
+import { SpeechRecognition as NativeSpeech } from '@capacitor-community/speech-recognition';
+import { Contacts } from '@capacitor-community/contacts';
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { defineCustomElements } from '@ionic/pwa-elements/loader';
+
+defineCustomElements(window);
 
 document.addEventListener('DOMContentLoaded', () => {
   const chatForm = document.getElementById('chat-form');
   const messageInput = document.getElementById('message-input');
   const chatFeed = document.getElementById('chat-feed');
+
+  const attachmentBtn = document.getElementById('attachment-btn');
+  const attachmentMenu = document.getElementById('attachment-menu');
+  const uploadImageBtn = document.getElementById('upload-image-btn');
+  const cameraBtn = document.getElementById('camera-btn');
+  const imageUploadInput = document.getElementById('image-upload-input');
+  const cameraInput = document.getElementById('camera-input');
+  const imagePreviewContainer = document.getElementById('image-preview-container');
+  const imagePreview = document.getElementById('image-preview');
+  const clearPreviewBtn = document.getElementById('clear-preview-btn');
+  
+  let currentImageBase64 = null;
+
+  if (attachmentBtn) {
+    attachmentBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      attachmentMenu.classList.toggle('hidden');
+      attachmentBtn.classList.toggle('active');
+    });
+
+    uploadImageBtn.addEventListener('click', async () => {
+      attachmentMenu.classList.add('hidden');
+      attachmentBtn.classList.remove('active');
+      const isNative = !!window.Capacitor?.isNative;
+      if (isNative) {
+        try {
+          const image = await Camera.getPhoto({
+            quality: 60,
+            width: 800,
+            allowEditing: false,
+            resultType: CameraResultType.Base64,
+            source: CameraSource.Photos
+          });
+          if (image && image.base64String) {
+            currentImageBase64 = `data:image/${image.format || 'jpeg'};base64,${image.base64String}`;
+            imagePreview.src = currentImageBase64;
+            imagePreviewContainer.classList.remove('hidden');
+          }
+        } catch (e) {
+          console.error("Camera gallery error:", e);
+        }
+      } else {
+        imageUploadInput.click();
+      }
+    });
+
+    cameraBtn.addEventListener('click', async () => {
+      attachmentMenu.classList.add('hidden');
+      attachmentBtn.classList.remove('active');
+      const isNative = !!window.Capacitor?.isNative;
+      if (isNative) {
+        try {
+          const image = await Camera.getPhoto({
+            quality: 60,
+            width: 800,
+            allowEditing: false,
+            resultType: CameraResultType.Base64,
+            source: CameraSource.Camera
+          });
+          if (image && image.base64String) {
+            currentImageBase64 = `data:image/${image.format || 'jpeg'};base64,${image.base64String}`;
+            imagePreview.src = currentImageBase64;
+            imagePreviewContainer.classList.remove('hidden');
+          }
+        } catch (e) {
+          console.error("Camera error:", e);
+        }
+      } else {
+        cameraInput.click();
+      }
+    });
+
+    const handleImageSelect = (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          currentImageBase64 = event.target.result;
+          imagePreview.src = currentImageBase64;
+          imagePreviewContainer.classList.remove('hidden');
+        };
+        reader.readAsDataURL(file);
+      }
+      e.target.value = '';
+    };
+
+    imageUploadInput.addEventListener('change', handleImageSelect);
+    cameraInput.addEventListener('change', handleImageSelect);
+
+    clearPreviewBtn.addEventListener('click', () => {
+      currentImageBase64 = null;
+      imagePreview.src = '';
+      imagePreviewContainer.classList.add('hidden');
+    });
+  }
   const micBtn = document.getElementById('mic-btn');
   const newChatBtn = document.querySelector('.new-chat-btn');
   const historyList = document.querySelector('.history-list');
@@ -52,30 +154,62 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedVoiceURI = localStorage.getItem('pratik_voice_uri') || '';
   let availableVoices = [];
 
-  const populateVoices = () => {
-      availableVoices = window.speechSynthesis.getVoices();
-      if (availableVoices.length === 0 || !voiceSelect) return;
+  const populateVoices = async () => {
+      if (!voiceSelect) return;
+      const isNative = !!window.Capacitor?.isNative;
+      
+      if (isNative) {
+          try {
+              const res = await TextToSpeech.getSupportedVoices();
+              availableVoices = res.voices || [];
+          } catch(e) {
+              availableVoices = [];
+          }
+      } else if ('speechSynthesis' in window) {
+          availableVoices = window.speechSynthesis.getVoices();
+      }
       
       voiceSelect.innerHTML = '';
+      if (availableVoices.length === 0) {
+          voiceSelect.innerHTML = '<option value="">Default System Voice (or none found)</option>';
+          return;
+      }
+
       availableVoices.forEach(voice => {
           const option = document.createElement('option');
-          option.value = voice.voiceURI;
+          const vId = voice.voiceURI || voice.identifier || voice.name;
+          option.value = vId;
           option.textContent = `${voice.name} (${voice.lang})`;
-          if (voice.voiceURI === selectedVoiceURI) option.selected = true;
+          if (vId === selectedVoiceURI) option.selected = true;
           voiceSelect.appendChild(option);
       });
       
       if (!selectedVoiceURI && availableVoices.length > 0) {
-          selectedVoiceURI = availableVoices[0].voiceURI;
+          selectedVoiceURI = availableVoices[0].voiceURI || availableVoices[0].identifier || availableVoices[0].name;
       }
   };
 
-  if ('speechSynthesis' in window) {
-      populateVoices();
-      if (window.speechSynthesis.onvoiceschanged !== undefined) {
+  const initVoices = async () => {
+      // Await on mobile so availableVoices is populated before any speech call
+      await populateVoices();
+      const isNative = !!window.Capacitor?.isNative;
+      
+      if (!isNative && 'speechSynthesis' in window && window.speechSynthesis.onvoiceschanged !== undefined) {
           window.speechSynthesis.onvoiceschanged = populateVoices;
       }
-  }
+
+      let attempts = 0;
+      const voiceInterval = setInterval(async () => {
+          attempts++;
+          if (availableVoices.length === 0) {
+              await populateVoices();
+          }
+          if (availableVoices.length > 0 || attempts > 15) {
+              clearInterval(voiceInterval);
+          }
+      }, 600);
+  };
+  initVoices(); // fires async, voices will be ready by the time user speaks
 
   // STATE: LocalStorage Chat History
   let chats = JSON.parse(localStorage.getItem('pratik_chats')) || [];
@@ -338,51 +472,122 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // Speech Recognition Setup
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let recognition = null;
-  
-  if (SpeechRecognition) {
-    recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.lang = 'en-US';
-    recognition.interimResults = false;
+  const setupSpeech = async () => {
+    const isNative = !!window.Capacitor?.isNative;
+    if (isNative) {
+      micBtn.addEventListener('click', async () => {
+        try {
+          const perms = await NativeSpeech.checkPermissions();
+          if (perms.speechRecognition !== 'granted') {
+             const req = await NativeSpeech.requestPermissions();
+             if (req.speechRecognition !== 'granted') return;
+          }
+          
+          if (micBtn.classList.contains('listening')) {
+             await NativeSpeech.stop();
+             micBtn.classList.remove('listening');
+          } else {
+             micBtn.classList.add('listening');
+             const { available } = await NativeSpeech.available();
+             if (!available) {
+                 micBtn.classList.remove('listening');
+                 alert("Speech recognition not available on this device.");
+                 return;
+             }
 
-    recognition.onstart = () => {
-      micBtn.classList.add('listening');
-    };
+             const result = await NativeSpeech.start({
+                 language: 'en-US',
+                 maxResults: 1,
+                 prompt: 'Speak now...',
+                 partialResults: false,
+                 popup: false
+             });
 
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      messageInput.value = transcript;
-    };
+             micBtn.classList.remove('listening');
+             
+             if (result && result.matches && result.matches.length > 0) {
+                 const text = result.matches[0];
+                 messageInput.value = text;
+                 if (text) processMessage(text);
+             }
+          }
+        } catch (e) {
+          console.error("Native Speech Error:", e);
+          micBtn.classList.remove('listening');
+        }
+      });
+      return;
+    }
 
-    recognition.onerror = (event) => {
-      console.error('Speech recognition error', event.error);
-      micBtn.classList.remove('listening');
-    };
+    // Web Fallback
+    const WebSpeech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (WebSpeech) {
+      let recognition = new WebSpeech();
+      recognition.continuous = false;
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
 
-    recognition.onend = () => {
-      micBtn.classList.remove('listening');
-      const text = messageInput.value.trim();
-      if (text) {
-        processMessage(text);
-      }
-    };
+      recognition.onstart = () => micBtn.classList.add('listening');
+      recognition.onresult = (event) => messageInput.value = event.results[0][0].transcript;
+      recognition.onerror = () => micBtn.classList.remove('listening');
+      recognition.onend = () => {
+        micBtn.classList.remove('listening');
+        const text = messageInput.value.trim();
+        if (text) processMessage(text);
+      };
 
-    micBtn.addEventListener('click', () => {
-      if (micBtn.classList.contains('listening')) {
-        recognition.stop();
-      } else {
-        recognition.start();
-      }
-    });
-  } else {
-    micBtn.style.display = 'none';
-  }
+      micBtn.addEventListener('click', () => {
+        if (micBtn.classList.contains('listening')) {
+          recognition.stop();
+        } else {
+          if (isVoiceEnabled && 'speechSynthesis' in window) {
+              window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+          }
+          recognition.start();
+        }
+      });
+    } else {
+      micBtn.style.display = 'none';
+    }
+  };
+
+  setupSpeech();
 
   // Text-to-Speech Utility
-  const speakText = (text) => {
+  const speakText = async (text) => {
     if (!isVoiceEnabled) return;
+    
+    // Use high-reliability native Capacitor TTS on Mobile
+    if (window.Capacitor?.isNative) {
+        try {
+            // If voices haven't loaded yet (race condition), try fetching them now
+            if (availableVoices.length === 0) {
+                try {
+                    const res = await TextToSpeech.getSupportedVoices();
+                    availableVoices = res.voices || [];
+                } catch(e) { /* ignore, will use default voice */ }
+            }
+            const options = {
+                text: text,
+                lang: 'en-US',
+                rate: 1.0,
+                pitch: 1.0,
+                volume: 1.0,
+                category: 'ambient',
+            };
+            if (selectedVoiceURI && availableVoices.length > 0) {
+                const voiceIndex = availableVoices.findIndex(v => (v.voiceURI || v.identifier || v.name) === selectedVoiceURI);
+                if (voiceIndex !== -1) {
+                    options.voice = voiceIndex;
+                }
+            }
+            await TextToSpeech.speak(options);
+        } catch (e) {
+            console.error('Capacitor TTS Error:', e);
+        }
+        return;
+    }
+
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
@@ -493,9 +698,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
-  async function processMessage(text) {
+  async function processMessage(text, imageBase64 = null) {
     // 1. Add user message
-    addMessageToFeed(text, 'user');
+    if (imageBase64) {
+      addMessageToFeed(text + `<br><img src="${imageBase64}" style="max-width:200px; border-radius:8px; margin-top:8px;">`, 'user');
+    } else {
+      addMessageToFeed(text, 'user');
+    }
     messageInput.value = '';
 
     const lowerText = text.toLowerCase();
@@ -505,7 +714,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const imgMatch = lowerText.match(/(?:generate|create|show|make|draw).*(?:image|photo|picture|drawing) of\s+(.+)/);
     if (imgMatch) {
       let prompt = imgMatch[1].trim().substring(0, 500);
-      const imageUrl = `http://localhost:3000/api/image?prompt=${encodeURIComponent(prompt)}&seed=${Math.floor(Math.random()*10000)}`;
+      const imageUrl = `https://pratik-ai-assistant.onrender.com/api/image?prompt=${encodeURIComponent(prompt)}&seed=${Math.floor(Math.random()*10000)}`;
       
       const imgHtml = `Here is your photo of ${prompt}:<br>
         <div style="margin-top: 10px;">
@@ -542,7 +751,53 @@ document.addEventListener('DOMContentLoaded', () => {
             removeTypingIndicator();
             addMessageToFeed(`Failed to get music playback.`, 'system');
         }
-        return;
+    }
+    
+    // Phone Call Intent
+    const callMatch = lowerText.match(/(?:call|dial)\s+(.+)/);
+    if (callMatch) {
+       let contactName = callMatch[1].trim();
+       contactName = contactName.replace(/[^\w\s-]/g, '');
+       const spokenName = contactName.charAt(0).toUpperCase() + contactName.slice(1);
+       
+       const isNative = !!window.Capacitor?.isNative;
+       if (isNative) {
+           speakText(`Finding ${spokenName} in your contacts`);
+           showTypingIndicator();
+           try {
+               const perms = await Contacts.checkPermissions();
+               if (perms.contacts !== 'granted') {
+                   const req = await Contacts.requestPermissions();
+                   if (req.contacts !== 'granted') {
+                       removeTypingIndicator();
+                       addMessageToFeed(`I need contacts permission to call ${spokenName}.`, 'system');
+                       return;
+                   }
+               }
+               const result = await Contacts.getContacts({ projection: { name: true, phones: true } });
+               const contact = result.contacts.find(c => {
+                   const nameStr = (c.name?.display || c.name?.given || '').toLowerCase();
+                   return nameStr.length > 1 && contactName.toLowerCase().includes(nameStr) || nameStr.includes(contactName.toLowerCase());
+               });
+               removeTypingIndicator();
+               
+               if (contact && contact.phones && contact.phones.length > 0) {
+                   const phone = contact.phones[0].number;
+                   addMessageToFeed(`Calling ${contact.name?.display || spokenName}...`, 'system');
+                   window.location.href = `tel:${phone.replace(/[^0-9+]/g, '')}`;
+               } else {
+                   addMessageToFeed(`I couldn't find a phone number for ${spokenName} in your contacts.`, 'system');
+               }
+           } catch(e) {
+               removeTypingIndicator();
+               addMessageToFeed(`Unable to search contacts.`, 'system');
+           }
+           return;
+       } else {
+           speakText(`I can only make phone calls from a native mobile application.`);
+           addMessageToFeed(`I can only make phone calls from a native mobile application.`, 'system');
+           return;
+       }
     }
     
     // Command Intent Matcher (Dynamic App Opening)
@@ -571,13 +826,22 @@ document.addEventListener('DOMContentLoaded', () => {
       let targetUrl = customUrls[appName];
       const spokenName = appName.charAt(0).toUpperCase() + appName.slice(1);
       
+      const isNative = !!window.Capacitor?.isNative;
+
       // Fallback: Try OS Native App Execution first before blindly opening .com
       if (!targetUrl) {
           try {
-             // Ask backend to execute OS command: start <appName>
-             executeSystemCommand(`start "" "${appName}"`).catch(()=> {}); // Don't crash if fails
-             speakText(`Attempting to launch ${spokenName} locally on your PC`);
-             addMessageToFeed(`Attempting to launch ${spokenName} locally...`, 'system');
+             if (!window.Capacitor?.isNative) {
+                 executeSystemCommand(`start "" "${appName}"`).catch(()=> {}); // Don't crash if fails
+                 speakText(`Attempting to launch ${spokenName} locally on your PC`);
+                 addMessageToFeed(`Attempting to launch ${spokenName} locally...`, 'system');
+             } else {
+                 const sanitizedApp = appName.replace(/\s+/g, '');
+                 const fallbackUrl = `https://www.${sanitizedApp}.com/`;
+                 window.open(fallbackUrl, '_system');
+                 speakText(`Attempting to open ${spokenName}`);
+                 addMessageToFeed(`Opening ${spokenName}...`, 'system');
+             }
              return;
           } catch(e) {
              const sanitizedApp = appName.replace(/\s+/g, '');
@@ -585,9 +849,9 @@ document.addEventListener('DOMContentLoaded', () => {
           }
       }
 
-      window.open(targetUrl, '_blank');
+      window.open(targetUrl, window.Capacitor?.isNative ? '_system' : '_blank');
       speakText(`Opening ${spokenName}`);
-      addMessageToFeed(`Opening ${spokenName} directly in a new tab...`, 'system');
+      addMessageToFeed(`Opening ${spokenName}...`, 'system');
       return;
     }
 
@@ -596,7 +860,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       // 3. Call API
-      const response = await sendChatMessage(text);
+      const response = await sendChatMessage(text, imageBase64);
       removeTypingIndicator();
       
       let replyHtml = response.reply;
@@ -605,7 +869,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const backendImgMatch = replyHtml.match(/\[IMAGE:\s*([\s\S]+?)\]/i);
       if (backendImgMatch) {
          let prompt = backendImgMatch[1].trim().replace(/\n/g, ' ').substring(0, 500);
-         const imageUrl = `http://localhost:3000/api/image?prompt=${encodeURIComponent(prompt)}&seed=${Math.floor(Math.random()*10000)}`;
+         const imageUrl = `https://pratik-ai-assistant.onrender.com/api/image?prompt=${encodeURIComponent(prompt)}&seed=${Math.floor(Math.random()*10000)}`;
          const imgHtml = `<br>
             <div style="margin-top: 10px;">
               <img src="${imageUrl}" alt="AI generated image" style="width: 100%; max-width: 400px; border-radius: 8px; box-shadow: var(--shadow-sm); display: block;" onload="const feed=document.getElementById('chat-feed'); feed.scrollTop=feed.scrollHeight;">
@@ -649,9 +913,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // Event Listeners
   chatForm.addEventListener('submit', (e) => {
     e.preventDefault();
-    const text = messageInput.value.trim();
-    if (!text) return;
-    processMessage(text);
+    
+    // Unlock voice synthesis for mobile browsers on interaction
+    if (isVoiceEnabled && 'speechSynthesis' in window) {
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+    }
+    
+    let text = messageInput.value.trim();
+    if (!text && !currentImageBase64) return;
+    
+    if (currentImageBase64) {
+      if (!text) text = "What is in this image?";
+      processMessage(text, currentImageBase64);
+      currentImageBase64 = null;
+      imagePreview.src = '';
+      imagePreviewContainer.classList.add('hidden');
+    } else {
+      processMessage(text);
+    }
   });
 
   newChatBtn.addEventListener('click', () => {
@@ -692,6 +971,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Global click listeners for dropdowns and image actions
   document.addEventListener('click', async (e) => {
     document.querySelectorAll('.history-dropdown').forEach(d => d.classList.add('hidden'));
+
+    if (attachmentBtn && !attachmentBtn.contains(e.target) && attachmentMenu && !attachmentMenu.contains(e.target)) {
+      attachmentMenu.classList.add('hidden');
+      attachmentBtn.classList.remove('active');
+    }
 
     const downloadBtn = e.target.closest('.download-btn');
     const shareBtn = e.target.closest('.share-btn');

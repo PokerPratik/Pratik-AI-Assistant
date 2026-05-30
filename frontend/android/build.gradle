@@ -22,6 +22,24 @@ allprojects {
         google()
         mavenCentral()
     }
+
+    // Force all subprojects (including capacitor plugins) to use Java 23
+    // since that's what is installed, even if a plugin requests Java 21.
+    plugins.withId("java") {
+        java {
+            toolchain {
+                languageVersion = JavaLanguageVersion.of(23)
+            }
+        }
+    }
+    plugins.withId("com.android.library") {
+        android {
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_23
+                targetCompatibility JavaVersion.VERSION_23
+            }
+        }
+    }
 }
 
 task clean(type: Delete) {
