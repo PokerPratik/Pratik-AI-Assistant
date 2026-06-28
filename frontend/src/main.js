@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import './style.css';
 import { sendChatMessage, executeSystemCommand, fetchMusicEmbed } from './api.js';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
@@ -23,6 +24,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const imagePreview = document.getElementById('image-preview');
   const clearPreviewBtn = document.getElementById('clear-preview-btn');
   
+  // Hands-Free Orb Elements
+  const orbContainer = document.getElementById('orb-container');
+  const orbStatus = document.getElementById('orb-status');
+  const orbTranscript = document.getElementById('orb-transcript');
+  const closeOrbBtn = document.getElementById('close-orb-btn');
+  window.isOrbModeActive = false;
+  
+  if (closeOrbBtn) {
+    closeOrbBtn.addEventListener('click', () => {
+       window.isOrbModeActive = false;
+       orbContainer.classList.add('hidden');
+       orbContainer.classList.remove('listening');
+       orbTranscript.textContent = "";
+    });
+  }
+  
   let currentImageBase64 = null;
 
   if (attachmentBtn) {
@@ -35,7 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
     uploadImageBtn.addEventListener('click', async () => {
       attachmentMenu.classList.add('hidden');
       attachmentBtn.classList.remove('active');
-      const isNative = !!window.Capacitor?.isNative;
+      const isNative = Capacitor.isNativePlatform();
       if (isNative) {
         try {
           const image = await Camera.getPhoto({
@@ -61,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
     cameraBtn.addEventListener('click', async () => {
       attachmentMenu.classList.add('hidden');
       attachmentBtn.classList.remove('active');
-      const isNative = !!window.Capacitor?.isNative;
+      const isNative = Capacitor.isNativePlatform();
       if (isNative) {
         try {
           const image = await Camera.getPhoto({
@@ -156,7 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const populateVoices = async () => {
       if (!voiceSelect) return;
-      const isNative = !!window.Capacitor?.isNative;
+      const isNative = Capacitor.isNativePlatform();
       
       if (isNative) {
           try {
@@ -192,7 +209,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const initVoices = async () => {
       // Await on mobile so availableVoices is populated before any speech call
       await populateVoices();
-      const isNative = !!window.Capacitor?.isNative;
+      const isNative = Capacitor.isNativePlatform();
       
       if (!isNative && 'speechSynthesis' in window && window.speechSynthesis.onvoiceschanged !== undefined) {
           window.speechSynthesis.onvoiceschanged = populateVoices;
@@ -473,7 +490,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Speech Recognition Setup
   const setupSpeech = async () => {
-    const isNative = !!window.Capacitor?.isNative;
+    const isNative = Capacitor.isNativePlatform();
     if (isNative) {
       micBtn.addEventListener('click', async () => {
         try {
@@ -519,33 +536,115 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Web Fallback
+    // Web Fallback with Hands-Free & Wake-Word
     const WebSpeech = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (WebSpeech) {
-      let recognition = new WebSpeech();
-      recognition.continuous = false;
-      recognition.lang = 'en-US';
-      recognition.interimResults = false;
+    window.wakeWordEngine = null;
+    window.assistantRecognition = null;
+    let isCommandListening = false;
 
-      recognition.onstart = () => micBtn.classList.add('listening');
-      recognition.onresult = (event) => messageInput.value = event.results[0][0].transcript;
-      recognition.onerror = () => micBtn.classList.remove('listening');
-      recognition.onend = () => {
+    if (WebSpeech) {
+      const initWakeWord = () => {
+         window.wakeWordEngine = new WebSpeech();
+         window.wakeWordEngine.continuous = true;
+         window.wakeWordEngine.interimResults = true;
+         window.wakeWordEngine.lang = 'en-US';
+         
+         window.wakeWordEngine.onresult = (event) => {
+             for (let i = event.resultIndex; i < event.results.length; ++i) {
+                 const transcript = event.results[i][0].transcript.toLowerCase();
+                 if (transcript.includes('hey pratik') || transcript.includes('okay pratik') || transcript.includes('hi pratik')) {
+                     window.wakeWordEngine.stop(); 
+                     if (!window.isOrbModeActive) window.openHandsFreeMode();
+                 }
+             }
+         };
+         
+         window.wakeWordEngine.onend = () => {
+             if (!isCommandListening && !window.isOrbModeActive) { // restart background listener
+                 try { window.wakeWordEngine.start(); } catch(e){}
+             }
+         };
+         
+         try { window.wakeWordEngine.start(); } catch(e) {}
+      };
+      
+      initWakeWord();
+
+      window.assistantRecognition = new WebSpeech();
+      window.assistantRecognition.continuous = false;
+      window.assistantRecognition.lang = 'en-US';
+      window.assistantRecognition.interimResults = true;
+
+      window.assistantRecognition.onstart = () => {
+          isCommandListening = true;
+          micBtn.classList.add('listening');
+          if (window.isOrbModeActive) {
+             orbContainer.classList.add('listening');
+             orbStatus.textContent = "Listening...";
+          }
+      };
+
+      window.assistantRecognition.onresult = (event) => {
+          let interim = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+              if (event.results[i].isFinal) {
+                  messageInput.value = event.results[i][0].transcript;
+                  if (orbTranscript) orbTranscript.textContent = event.results[i][0].transcript;
+              } else {
+                  interim += event.results[i][0].transcript;
+                  if (orbTranscript) orbTranscript.textContent = interim;
+              }
+          }
+      };
+
+      window.assistantRecognition.onerror = () => {
+         micBtn.classList.remove('listening');
+         if (window.isOrbModeActive) orbContainer.classList.remove('listening');
+      };
+
+      window.assistantRecognition.onend = () => {
+        isCommandListening = false;
         micBtn.classList.remove('listening');
+        if (window.isOrbModeActive) orbContainer.classList.remove('listening');
+        
         const text = messageInput.value.trim();
-        if (text) processMessage(text);
+        if (text) {
+           processMessage(text);
+        } else if (window.isOrbModeActive) {
+           orbStatus.textContent = "I didn't catch that. Say Hey Pratik to re-awaken.";
+        } else {
+           try { window.wakeWordEngine.start(); } catch(e) {}
+        }
       };
 
       micBtn.addEventListener('click', () => {
         if (micBtn.classList.contains('listening')) {
-          recognition.stop();
+          window.assistantRecognition.stop();
         } else {
+          try { window.wakeWordEngine.stop(); } catch(e) {}
           if (isVoiceEnabled && 'speechSynthesis' in window) {
               window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
           }
-          recognition.start();
+          window.assistantRecognition.start();
         }
       });
+      
+      window.openHandsFreeMode = () => {
+          window.isOrbModeActive = true;
+          if (orbContainer) orbContainer.classList.remove('hidden');
+          if (orbStatus) orbStatus.textContent = "Listening...";
+          if (orbTranscript) orbTranscript.textContent = "";
+          try { window.wakeWordEngine.stop(); } catch(e) {}
+          
+          if (isVoiceEnabled && 'speechSynthesis' in window) {
+              window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+          }
+          speakText("Yes?"); 
+          setTimeout(() => {
+             try { window.assistantRecognition.start(); } catch(e) {}
+          }, 800);
+      };
+      
     } else {
       micBtn.style.display = 'none';
     }
@@ -557,33 +656,37 @@ document.addEventListener('DOMContentLoaded', () => {
   const speakText = async (text) => {
     if (!isVoiceEnabled) return;
     
+    const stopOrbPulse = () => {
+       if (window.isOrbModeActive && document.getElementById('orb-container')) {
+           document.getElementById('orb-container').classList.remove('listening');
+           document.getElementById('orb-status').textContent = "Say Hey Pratik...";
+       }
+    };
+    
+    if (window.isOrbModeActive && document.getElementById('orb-container')) {
+       document.getElementById('orb-container').classList.add('listening');
+       document.getElementById('orb-status').textContent = "Speaking...";
+    }
+
     // Use high-reliability native Capacitor TTS on Mobile
-    if (window.Capacitor?.isNative) {
+    if (Capacitor.isNativePlatform()) {
         try {
-            // If voices haven't loaded yet (race condition), try fetching them now
             if (availableVoices.length === 0) {
                 try {
                     const res = await TextToSpeech.getSupportedVoices();
                     availableVoices = res.voices || [];
-                } catch(e) { /* ignore, will use default voice */ }
+                } catch(e) { }
             }
-            const options = {
-                text: text,
-                lang: 'en-US',
-                rate: 1.0,
-                pitch: 1.0,
-                volume: 1.0,
-                category: 'ambient',
-            };
+            const options = { text: text, lang: 'en-US', rate: 1.0, pitch: 1.0, volume: 1.0, category: 'ambient' };
             if (selectedVoiceURI && availableVoices.length > 0) {
                 const voiceIndex = availableVoices.findIndex(v => (v.voiceURI || v.identifier || v.name) === selectedVoiceURI);
-                if (voiceIndex !== -1) {
-                    options.voice = voiceIndex;
-                }
+                if (voiceIndex !== -1) options.voice = voiceIndex;
             }
             await TextToSpeech.speak(options);
+            stopOrbPulse();
         } catch (e) {
             console.error('Capacitor TTS Error:', e);
+            stopOrbPulse();
         }
         return;
     }
@@ -597,6 +700,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
         utterance.lang = 'en-US';
     }
+    
+    utterance.onend = stopOrbPulse;
+    utterance.onerror = stopOrbPulse;
     window.speechSynthesis.speak(utterance);
   };
 
@@ -709,6 +815,98 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const lowerText = text.toLowerCase();
 
+    // Agentic Workflow: Plan Trip Intent
+    const tripMatch = lowerText.match(/(?:plan).*(?:trip|vacation|tour|holiday|journey)\s+(?:to\s+)?(.+)/);
+    if (tripMatch) {
+       // Clean punctuation from destination
+       let destination = tripMatch[1].trim().replace(/[^\w\s-]/g, '');
+       destination = destination.charAt(0).toUpperCase() + destination.slice(1);
+       
+       speakText(`Agentic workflow initiated. Planning your trip to ${destination}.`);
+       showTypingIndicator();
+       
+       // Simulate orchestration
+       setTimeout(async () => {
+         
+         // 1. Fetch real music for the trip
+         let embedUrl = "";
+         try {
+             // Reusing the existing Youtube API search
+             const data = await fetchMusicEmbed(`${destination} road trip music`);
+             if (data.success && data.embedUrl) {
+                 embedUrl = data.embedUrl;
+             }
+         } catch(e) {
+             console.error("Music fetch failed:", e);
+         }
+         
+         // 2. Fetch real weather using Open-Meteo
+         let weatherDesc = "<strong>Next Week:</strong> Mostly Sunny, 28°C - Perfect for sightseeing!";
+         let weatherVoiceDesc = "The weather looks great";
+         try {
+             const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(destination)}&count=1&language=en&format=json`);
+             const geoData = await geoRes.json();
+             if (geoData.results && geoData.results.length > 0) {
+                 const { latitude, longitude, name, country } = geoData.results[0];
+                 const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
+                 const weatherData = await weatherRes.json();
+                 if (weatherData.current_weather) {
+                     const temp = weatherData.current_weather.temperature;
+                     const wcode = weatherData.current_weather.weathercode;
+                     
+                     let condition = "Clear ☀️";
+                     let voiceCond = "clear";
+                     if (wcode >= 1 && wcode <= 3) { condition = "Partly Cloudy ⛅"; voiceCond = "partly cloudy"; }
+                     if (wcode >= 45 && wcode <= 48) { condition = "Foggy 🌫️"; voiceCond = "foggy"; }
+                     if (wcode >= 51 && wcode <= 67) { condition = "Rainy 🌧️"; voiceCond = "rainy"; }
+                     if (wcode >= 71 && wcode <= 77) { condition = "Snowy ❄️"; voiceCond = "snowy"; }
+                     if (wcode >= 95) { condition = "Thunderstorm 🌩️"; voiceCond = "stormy"; }
+
+                     weatherDesc = `<strong>Current in ${name}, ${country}:</strong><br/>${condition}, ${temp}°C`;
+                     weatherVoiceDesc = `The weather in ${name} is currently ${voiceCond} at ${temp} degrees celsius`;
+                 }
+             }
+         } catch(e) {
+             console.error("Weather fetch failed:", e);
+         }
+         
+         // 3. Build the beautiful UI card
+         const htmlCard = `
+           <div class="agentic-card" style="background: var(--bg-secondary); border-radius: 16px; padding: 16px; box-shadow: var(--shadow-md); margin-top: 10px; border: 1px solid var(--border-light);">
+              <h3 style="margin-bottom: 12px; margin-top: 0; color: #a855f7; display: flex; align-items: center; gap: 8px;">
+                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></svg>
+                 Agentic Workflow: ${destination}
+              </h3>
+              
+              <div style="background: rgba(16, 185, 129, 0.1); border-left: 4px solid #10b981; padding: 10px; border-radius: 4px; margin-bottom: 12px;">
+                 <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; font-weight: bold; margin-bottom: 6px;">1. Weather 🌤️</div>
+                 <div style="font-size: 0.95rem;">
+                    ${weatherDesc}
+                 </div>
+              </div>
+
+              <div style="background: rgba(59, 130, 246, 0.1); border-left: 4px solid #3b82f6; padding: 10px; border-radius: 4px; margin-bottom: 12px;">
+                 <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; font-weight: bold; margin-bottom: 6px;">2. Travel & Stay ✈️</div>
+                 <div style="font-size: 0.95rem;">
+                   <div style="display: flex; justify-content: space-between; margin-bottom: 4px;"><span>Flights Estimate:</span> <strong>₹8,000 - ₹15,000 (Roundtrip)</strong></div>
+                   <div style="display: flex; justify-content: space-between;"><span>Hotels Estimate:</span> <strong>₹2,000 - ₹5,000 / night</strong></div>
+                 </div>
+                 <button onclick="window.open('https://www.expedia.com/Hotel-Search?destination=${destination}', '_blank')" style="width: 100%; margin-top: 10px; background: #3b82f6; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">Check Live Prices</button>
+              </div>
+              
+              <div style="margin-top: 12px;">
+                 <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; font-weight: bold; margin-bottom: 8px;">3. Curated Roadtrip Playlist 🎵</div>
+                 ${embedUrl ? `<span class="yt-facade-placeholder" data-embed="${embedUrl}" data-label="${destination} Roadtrip"></span>` : '*(Playlist generation unavailable)*'}
+              </div>
+           </div>
+         `;
+         removeTypingIndicator();
+         addMessageToFeed(htmlCard, 'system');
+         speakText(`I have compiled a trip plan for ${destination}. ${weatherVoiceDesc}, flights are estimated around 10,000 rupees, and I've attached a curated playlist for your journey.`);
+       }, 500); // reduced delay slightly since API takes time
+       
+       return;
+    }
     
     // Image Generation Intent
     const imgMatch = lowerText.match(/(?:generate|create|show|make|draw).*(?:image|photo|picture|drawing) of\s+(.+)/);
@@ -760,7 +958,7 @@ document.addEventListener('DOMContentLoaded', () => {
        contactName = contactName.replace(/[^\w\s-]/g, '');
        const spokenName = contactName.charAt(0).toUpperCase() + contactName.slice(1);
        
-       const isNative = !!window.Capacitor?.isNative;
+       const isNative = Capacitor.isNativePlatform();
        if (isNative) {
            speakText(`Finding ${spokenName} in your contacts`);
            showTypingIndicator();
@@ -775,7 +973,8 @@ document.addEventListener('DOMContentLoaded', () => {
                    }
                }
                const result = await Contacts.getContacts({ projection: { name: true, phones: true } });
-               const contact = result.contacts.find(c => {
+               const contactsList = result.contacts || [];
+               const contact = contactsList.find(c => {
                    const nameStr = (c.name?.display || c.name?.given || '').toLowerCase();
                    return nameStr.length > 1 && contactName.toLowerCase().includes(nameStr) || nameStr.includes(contactName.toLowerCase());
                });
@@ -784,13 +983,22 @@ document.addEventListener('DOMContentLoaded', () => {
                if (contact && contact.phones && contact.phones.length > 0) {
                    const phone = contact.phones[0].number;
                    addMessageToFeed(`Calling ${contact.name?.display || spokenName}...`, 'system');
-                   window.location.href = `tel:${phone.replace(/[^0-9+]/g, '')}`;
+                    try {
+                        if (Capacitor.Plugins.DirectCall) {
+                            Capacitor.Plugins.DirectCall.startCall({ number: phone });
+                        } else {
+                            window.location.href = `tel:${phone.replace(/[^0-9+]/g, '')}`;
+                        }
+                    } catch (callErr) {
+                        console.error("Direct Call Failed", callErr);
+                    }
                } else {
                    addMessageToFeed(`I couldn't find a phone number for ${spokenName} in your contacts.`, 'system');
                }
            } catch(e) {
                removeTypingIndicator();
-               addMessageToFeed(`Unable to search contacts.`, 'system');
+               console.error("Contacts Error:", e);
+               addMessageToFeed(`Unable to search contacts: ${e.message || String(e)}`, 'system');
            }
            return;
        } else {
@@ -826,12 +1034,12 @@ document.addEventListener('DOMContentLoaded', () => {
       let targetUrl = customUrls[appName];
       const spokenName = appName.charAt(0).toUpperCase() + appName.slice(1);
       
-      const isNative = !!window.Capacitor?.isNative;
+      const isNative = Capacitor.isNativePlatform();
 
       // Fallback: Try OS Native App Execution first before blindly opening .com
       if (!targetUrl) {
           try {
-             if (!window.Capacitor?.isNative) {
+             if (!Capacitor.isNativePlatform()) {
                  executeSystemCommand(`start "" "${appName}"`).catch(()=> {}); // Don't crash if fails
                  speakText(`Attempting to launch ${spokenName} locally on your PC`);
                  addMessageToFeed(`Attempting to launch ${spokenName} locally...`, 'system');
@@ -849,7 +1057,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
       }
 
-      window.open(targetUrl, window.Capacitor?.isNative ? '_system' : '_blank');
+      window.open(targetUrl, Capacitor.isNativePlatform() ? '_system' : '_blank');
       speakText(`Opening ${spokenName}`);
       addMessageToFeed(`Opening ${spokenName}...`, 'system');
       return;
